@@ -1,7 +1,7 @@
 #!/usr/bin/env -S scala-cli -S 3
 //> using scala 3.4.0
 //> using option -no-indent
-//> using option -source-future
+//> using option -source:future
 //> using option -new-syntax
 //> using option -Wunused:all
 //> using toolkit typelevel:0.1.23

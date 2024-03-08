@@ -40,3 +40,9 @@ First try and see if that works for you before using this!
 
 The issues on this repo prefixed with `Test: ` will never be closed and are types of issues that this script ought to
 handle well.
+
+So I don't have to remember how to invoke script everytime I test it :shrug:
+
+```shell
+./test.sh
+```
