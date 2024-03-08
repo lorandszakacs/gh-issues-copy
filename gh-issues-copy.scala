@@ -4,6 +4,7 @@
 //> using option -new-syntax
 //> using option -Wunused:all
 //> using toolkit typelevel:0.1.23
+//> using dep org.typelevel::cats-parse:1.0.0
 //> using dep io.circe::circe-core:0.14.6
 //> using dep io.circe::circe-parser:0.14.6
 
@@ -48,6 +49,7 @@ object Main extends IOApp {
 
   override def run(args: List[String]): IO[ExitCode] = {
     val program = for {
+
       (source, target, limit) <- parseArgs(args)
       _ <- printer.info(
         s"""
@@ -78,8 +80,6 @@ object Main extends IOApp {
 }
 
 object gh {
-
-  private val nl = "\r\n"
 
   // https://cli.github.com/manual/gh_issue_list
   def listOpenIssues(source: SourceRepo, limit: Limit): Stream[IO, Issue] = {
@@ -114,23 +114,26 @@ object gh {
   }
 
   // https://cli.github.com/manual/gh_issue_create
-  def copyIssue(target: TargetRepo)(issue: Issue): IO[CopiedIssue] = {
-    val title = CommandArgString(issue.title)
-    val body = CommandArgString(
-      s"${issue.body}$nl$nl---$nl${nl}This issue was copied over from: [${issue.url}](${issue.url})"
-    )
-    val command = NonEmptyList.of(
-      "gh",
-      "issue",
-      "create",
-      "--repo",
-      target,
-      "--title",
-      title,
-      "--body",
-      body
-    )
+  def copyIssue(target: TargetRepo)(issue: Issue): IO[CopiedIssue] =
     for {
+      bodyWithNoTags <- UserTag.findAllTagsAndReplaceWithLinks(issue.body)
+      title = CommandArgString(issue.title)
+      source = s"This issue was copied over from: ${md.link(issue.url)}"
+      openedBy = ""
+      footer = s"$source${md.nl}openedBy"
+      newBody = CommandArgString(s"$bodyWithNoTags${md.horizontalLine}$footer")
+      command = NonEmptyList.of(
+        "gh",
+        "issue",
+        "create",
+        "--repo",
+        target,
+        "--title",
+        title,
+        "--body",
+        newBody
+      )
+
       _ <- printer.debugJson("issueNoCommentsJson:", issue.copy(comments = List.empty))
       _ <- printer.command(command)
       newIssueURL <- ProcessBuilder(command.head, command.tail)
@@ -139,24 +142,26 @@ object gh {
 
       _ <- printer.info(s"created new issue @ $newIssueURL. starting to copy over comments...")
     } yield CopiedIssue(newIssueURL, issue.comments)
-  }
 
   // https://cli.github.com/manual/gh_issue_comment
   def copyComment(newIssueURL: NewIssueURL)(comment: Comment): IO[Unit] = {
+    // for some reason github expands comment.urls into something clickable, while it does not do so with issues.
     val commentLink = s"This comment was copied over from: ${comment.url}"
-    val authorLink = s"https://github.com/${comment.author.login}"
-    val author = s"It was written by: $authorLink"
-    val header = s"$commentLink$nl$author"
-    val body = CommandArgString(s"$header$nl$nl---$nl$nl${comment.body}")
-    val command = NonEmptyList.of(
-      "gh",
-      "issue",
-      "comment",
-      newIssueURL,
-      "--body",
-      body
-    )
+    val authorProfileLink = md.link(comment.author.login, gh.userProfileLink(comment.author.login))
+    val author = s"It was written by: $authorProfileLink"
+    val header = s"$commentLink${md.nl}$author"
+
     for {
+      bodyWithLinksInsteadOfTags <- UserTag.findAllTagsAndReplaceWithLinks(comment.body)
+      body = CommandArgString(s"$header${md.horizontalLine}$bodyWithLinksInsteadOfTags")
+      command = NonEmptyList.of(
+        "gh",
+        "issue",
+        "comment",
+        newIssueURL,
+        "--body",
+        body
+      )
       _ <- printer.debugJson("commentJson:", comment)
       _ <- printer.command(command)
       _ <- ProcessBuilder(command.head, command.tail)
@@ -184,6 +189,7 @@ object gh {
       .map(_.trim)
       .map(NewIssueURL.apply)
 
+  def userProfileLink(username: String): String = s"https://github.com/$username"
 }
 
 object printer {
@@ -240,6 +246,13 @@ object printer {
     else Stream.raiseError(bug(s"Indent should be >= 0 but was: $indent"))
 }
 
+object md {
+  lazy val nl: String = "\r\n"
+  lazy val horizontalLine: String = s"$nl$nl---$nl$nl"
+  def link(desc: String, link: String): String = s"[$desc]($link)"
+  def link(s: String): String = s"[$s]($s)"
+}
+
 /** Instantiate only after you've copied over the issue */
 case class CopiedIssue(
     newUrl: NewIssueURL,
@@ -273,6 +286,68 @@ case class Comment(
     createdAt: String // we only keep as string. Just so we can explicitly sort by it
 ) derives circe.Decoder,
       circe.Encoder.AsObject
+
+/** A username found in github content. Can only be identified by a preceding '@' The value does not actually contain
+  * '@'
+  */
+opaque type UserTag <: String = String
+object UserTag {
+  import cats.parse.Rfc5234
+  import cats.parse.Parser
+  private val At: Char = '@'
+
+  // private val AtParser = Parser.char(At)
+  private val userNameStart = Rfc5234.alpha
+  private val userNameMiddle = Rfc5234.alpha | Rfc5234.digit | Parser.charIn('-')
+
+  // max 39 chars. Technically incorrect since the last char cannot be - :shrug:
+  private val usernameParser: Parser[UserTag] = (for {
+    first <- userNameStart
+    middle <- userNameMiddle.rep(1, 38)
+  } yield middle.prepend(first)).string
+
+  // FIXME: a non hacky parser looks like this, roughly. But instead of figuring it out,
+  //   we write the hack with `s.split(At)`, lol
+  // private val parserAll: Parser0[List[UserTag]] =
+  //  (Parser.until(AtParser).void *> usernameParser).rep0 <* Parser.anyChar.rep0
+
+  private def findAll(s: String): Either[Throwable, List[UserTag]] = {
+    // this is what we call a hack
+    val substrings: Array[String] = s.split(At).drop(1) // first part never contains any element
+    val allTags: Either[Throwable, List[UserTag]] = substrings.toList.traverse { substring =>
+      usernameParser
+        .parse(substring) // we know for sure that whatever starts in the string is a username
+        .map(_._2) // we discard whatever is after it
+        .map(_.stripSuffix("-")) // since we are lazy and our parser can also glob up an invalid dash at the end
+        .leftMap(e => new Bug(s"parser error should never happen: ${e.toString}"))
+    }
+
+    // parserAll.parseAll(s).leftMap(e => new Bug(s"parser error should never happen: ${e.toString}"))
+    allTags
+  }
+
+  /** Replaces all @tag in the given string with a link to the github profile.
+    */
+  def findAllTagsAndReplaceWithLinks(s: String): IO[String] =
+    for {
+      taggedUsers: List[UserTag] <- UserTag.findAll(s) match {
+        case Left(e)      => printer.error(e).as(List.empty[UserTag]) // we just log errors and not fail
+        case Right(value) => value.pure[IO]
+      }
+
+      _ <- printer.debug(s"Found following tags: $taggedUsers")
+
+      // "@username" becomes [username](https://github.com/username)
+      bodyWithLinksInsteadOfTags: String =
+        taggedUsers.foldRight(s) { case (userTag: UserTag, commentBody: String) =>
+          commentBody.replaceAll(userTag.withAt, md.link(userTag, gh.userProfileLink(userTag)))
+        }
+    } yield bodyWithLinksInsteadOfTags
+
+  extension (t: UserTag) {
+    private def withAt: String = s"$At$t"
+  }
+}
 
 opaque type SourceRepo <: String = String
 object SourceRepo { def apply(s: String): SourceRepo = s }
