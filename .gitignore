@@ -1,0 +1,10 @@
+# macos
+.DS_Store
+
+# scala-cli, sbt, ides, etc
+.metals
+.bsp
+target/
+.vscode
+.scala-build
+.idea/
