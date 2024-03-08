@@ -18,8 +18,10 @@ import fs2.io.process.*
 import scala.concurrent.duration.*
 
 // script that copies $LIMIT number of issues and their comments from the $SOURCE to the $TARGET github repo.
-// it will include a link to the original issue in the description of the copied issue
-// it will include a link to the original comment at the end of the copied comment
+// it will include a link to the original issue and author in the header of the copied issue
+// it will include a link to the original comment and author at the header of the copied comment
+// see results samples here:
+//   https://github.com/lorandszakacs/test-target/issues
 //
 // what this script assumes about the state of the terminal it's run from:
 // - that you have installed github cli https://cli.github.com/
