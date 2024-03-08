@@ -1,7 +1,6 @@
 #!/usr/bin/env -S scala-cli -S 3
 //> using scala 3.4.0
 //> using option -no-indent
-//> using option -source:future
 //> using option -new-syntax
 //> using option -Wunused:all
 //> using toolkit typelevel:0.1.23
@@ -91,7 +90,7 @@ object gh {
       "--repo",
       source,
       "--json",
-      """"id","title","body","url","comments","createdAt"""",
+      """"id","title","body","url","comments","createdAt","author"""",
       "--state",
       "open",
       "--limit",
@@ -144,9 +143,11 @@ object gh {
 
   // https://cli.github.com/manual/gh_issue_comment
   def copyComment(newIssueURL: NewIssueURL)(comment: Comment): IO[Unit] = {
-    val body = CommandArgString(
-      s"${comment.body}$nl$nl---$nl${nl}This comment was copied over from: [${comment.url}](${comment.url})"
-    )
+    val commentLink = s"This comment was copied over from: ${comment.url}"
+    val authorLink = s"https://github.com/${comment.author.login}"
+    val author = s"It was written by: $authorLink"
+    val header = s"$commentLink$nl$author"
+    val body = CommandArgString(s"$header$nl$nl---$nl$nl${comment.body}")
     val command = NonEmptyList.of(
       "gh",
       "issue",
@@ -259,10 +260,16 @@ case class Issue(
 ) derives circe.Decoder,
       circe.Encoder.AsObject
 
+case class Author(
+    login: String
+) derives circe.Decoder,
+      circe.Encoder.AsObject
+
 case class Comment(
     id: String,
     body: String,
     url: String,
+    author: Author,
     createdAt: String // we only keep as string. Just so we can explicitly sort by it
 ) derives circe.Decoder,
       circe.Encoder.AsObject
