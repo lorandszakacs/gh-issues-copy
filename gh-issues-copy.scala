@@ -40,7 +40,7 @@ import scala.concurrent.duration.*
 // https://cli.github.com/manual/gh_issue_comment
 object Main extends IOApp {
   // we could use a better rate limiter, tbh, but fs2.Stream.metered will have to do
-  private given waitingTime: FiniteDuration = 4.seconds
+  given waitingTime: FiniteDuration = 4.seconds
 
   // prints out commands
   val debugCommands: Boolean = false
