@@ -119,7 +119,7 @@ object gh {
       bodyWithNoTags <- UserTag.findAllTagsAndReplaceWithLinks(issue.body)
       title = CommandArgString(issue.title)
       source = s"This issue was copied over from: ${md.link(issue.url)}"
-      openedBy = ""
+      openedBy = s"It was opened by: ${md.link(issue.author.login, gh.userProfileLink(issue.author.login))}"
       footer = s"$source${md.nl}openedBy"
       newBody = CommandArgString(s"$bodyWithNoTags${md.horizontalLine}$footer")
       command = NonEmptyList.of(
@@ -269,6 +269,7 @@ case class Issue(
     title: String,
     body: String,
     url: String,
+    author: Author,
     comments: List[Comment]
 ) derives circe.Decoder,
       circe.Encoder.AsObject
