@@ -120,7 +120,7 @@ object gh {
       title = CommandArgString(issue.title)
       source = s"This issue was copied over from: ${md.link(issue.url)}"
       openedBy = s"It was opened by: ${md.link(issue.author.login, gh.userProfileLink(issue.author.login))}"
-      footer = s"$source${md.nl}openedBy"
+      footer = s"$source${md.nl}$openedBy"
       newBody = CommandArgString(s"$bodyWithNoTags${md.horizontalLine}$footer")
       command = NonEmptyList.of(
         "gh",
