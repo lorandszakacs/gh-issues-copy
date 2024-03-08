@@ -29,7 +29,7 @@ import scala.concurrent.duration.*
 //
 //SOURCE = lorandszakacs/gh-issues-copy
 //TARGET = lorandszakacs/test-target
-//LIMIT = 10 -- optional, defaults to 50
+//LIMIT = 1 -- optional, defaults to 50
 //invoke script like:
 //
 // $ ./gh-issues-copy.scala -- lorandszakacs/gh-issues-copy lorandszakacs/test-target 40
@@ -91,7 +91,7 @@ object gh {
       "--repo",
       source,
       "--json",
-      """"id","title","body","url","comments"""",
+      """"id","title","body","url","comments","createdAt"""",
       "--state",
       "open",
       "--limit",
@@ -115,7 +115,7 @@ object gh {
   }
 
   // https://cli.github.com/manual/gh_issue_create
-  def copyIssue(target: TargetRepo)(issue: Issue): IO[NewIssue] = {
+  def copyIssue(target: TargetRepo)(issue: Issue): IO[CopiedIssue] = {
     val title = CommandArgString(issue.title)
     val body = CommandArgString(
       s"${issue.body}$nl$nl---$nl${nl}This issue was copied over from: [${issue.url}](${issue.url})"
@@ -139,7 +139,7 @@ object gh {
         .use(p => (parseNewIssueURLFromStdout(p), printer.dumpStderr(p)).parTupled.map(_._1))
 
       _ <- printer.info(s"created new issue @ $newIssueURL. starting to copy over comments...")
-    } yield NewIssue(newIssueURL, issue.comments)
+    } yield CopiedIssue(newIssueURL, issue.comments)
   }
 
   // https://cli.github.com/manual/gh_issue_comment
@@ -205,10 +205,18 @@ object printer {
   )
 
   def dumpStdout(p: Process[IO], indent: Int = 1): IO[Unit] =
-    printlns(p.stdout.through(fs2.text.utf8.decode), s"$github$seedling", indent)
+    printlns(
+      p.stdout.through(fs2.text.utf8.decode).through(fs2.text.lines).filterNot(_.isBlank),
+      s"$github$seedling",
+      indent
+    )
 
   def dumpStderr(p: Process[IO], indent: Int = 1): IO[Unit] =
-    printlns(p.stderr.through(fs2.text.utf8.decode), s"$github$fire", indent)
+    printlns(
+      p.stderr.through(fs2.text.utf8.decode).through(fs2.text.lines).filterNot(_.isBlank),
+      s"$github$fire",
+      indent
+    )
 
   def command(c: NonEmptyList[String]): IO[Unit] =
     if Main.debugCommands then printlns(s"running command:   ${c.mkString_(" ")}", point, 1) else IO.unit
@@ -231,11 +239,15 @@ object printer {
     else Stream.raiseError(bug(s"Indent should be >= 0 but was: $indent"))
 }
 
-case class NewIssue(
+/** Instantiate only after you've copied over the issue */
+case class CopiedIssue(
     newUrl: NewIssueURL,
-    commentsToCopy: List[Comment]
+    private val commentsToCopy: List[Comment]
 ) {
-  def commentsToCopyStream: Stream[IO, Comment] = Stream.emits(commentsToCopy)
+
+  /** Emits comments from oldest to newest, so that you can immediately create them as they are emitted
+    */
+  def commentsToCopyStream: Stream[IO, Comment] = Stream.emits(commentsToCopy.sortBy(_.createdAt))
 }
 
 case class Issue(
@@ -250,7 +262,8 @@ case class Issue(
 case class Comment(
     id: String,
     body: String,
-    url: String
+    url: String,
+    createdAt: String // we only keep as string. Just so we can explicitly sort by it
 ) derives circe.Decoder,
       circe.Encoder.AsObject
 
@@ -271,6 +284,7 @@ object Limit {
 
 opaque type CommandArgString <: String = String
 object CommandArgString {
+  // thanks you fs2.io.process for handling all these aspects for us :relieved:
   def apply(s: String): CommandArgString = s
 //    val escapedSingleQuotes = s.replace("'", "\\'")
 //    s"$escapedSingleQuotes"

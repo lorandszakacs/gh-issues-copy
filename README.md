@@ -8,7 +8,7 @@ First try and see if that works for you before using this!
 # requirements
 
 - Things that you can manage with [sdkman.io](https://sdkman.io/):
-    - Java 8+ (ideally +)
+    - Java 11+ (ideally +) — we use `String.isBlank`
     - [scala-cli](https://scala-cli.virtuslab.org/)
 - github [cli](https://cli.github.com/)
     - the script assumes that you already did `gh auth`
