@@ -271,10 +271,9 @@ object Limit {
 
 opaque type CommandArgString <: String = String
 object CommandArgString {
-  def apply(s: String): CommandArgString = {
-    val escapedSingleQuotes = s.replace("'", "\\'")
-    s"$escapedSingleQuotes"
-  }
+  def apply(s: String): CommandArgString = s
+//    val escapedSingleQuotes = s.replace("'", "\\'")
+//    s"$escapedSingleQuotes"
 }
 
 final class BadArgument(s: String) extends IllegalArgumentException(s) with scala.util.control.NoStackTrace
