@@ -8,9 +8,12 @@
 //> using dep io.circe::circe-core:0.14.6
 //> using dep io.circe::circe-parser:0.14.6
 
+import cats.*
+import cats.data.*
 import cats.syntax.all.*
 import cats.effect.*
 import fs2.*
+import fs2.io.process.*
 
 object Cleanup extends IOApp {
 
@@ -20,7 +23,7 @@ object Cleanup extends IOApp {
     case (targetRepo: TargetRepo, start, end) =>
       Stream
         .range(start, end)
-        .evalMap(gh.deleteIssue(targetRepo))
+        .evalMap(deleteIssue(targetRepo))
         .meteredStartImmediately(Main.waitingTime)
         .compile
         .drain
@@ -31,7 +34,7 @@ object Cleanup extends IOApp {
   // lazily rename to run :shrug:
   def parseArgs(args: List[String]): IO[(TargetRepo, Int, Int)] = args match {
     case repo :: start :: finish :: _ => (TargetRepo(repo).pure[IO], IO(start.toInt), IO(finish.toInt)).tupled
-    case _                            => BadArgument("expected $REPO $START_NR $END_NR").raiseError
+    case _ => BadArgument(s"expected REPO START_NR END_NR bit got: ${args.mkString("")}").raiseError
   }
 
   /*

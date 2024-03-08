@@ -1,0 +1,4 @@
+#!/bin/sh
+
+# invoke from root folder
+./helpers/cleanup.scala ./gh-issues-copy.scala --main-class Cleanup -- lorandszakacs/test-target $1 $2
