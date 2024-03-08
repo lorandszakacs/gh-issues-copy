@@ -40,7 +40,7 @@ import scala.concurrent.duration.*
 // https://cli.github.com/manual/gh_issue_comment
 object Main extends IOApp {
   // we could use a better rate limiter, tbh, but fs2.Stream.metered will have to do
-  private val waitingTime: FiniteDuration = 3.seconds
+  private given waitingTime: FiniteDuration = 4.seconds
 
   // prints out commands
   val debugCommands: Boolean = false
@@ -59,16 +59,16 @@ object Main extends IOApp {
            |""".stripMargin.trim
       )
 
-      _ <- ghListIssues(source, limit)
-        .evalMap(ghCopyOverIssue(target))
-        .metered(waitingTime)
+      _ <- gh
+        .listOpenIssues(source, limit)
+        .evalMap(gh.copyIssue(target))
+        .flatMap(copiedIssue => copiedIssue.commentsToCopyStream.evalMap(gh.copyComment(copiedIssue.newUrl)))
+        .meteredStartImmediately(waitingTime)
         .compile
         .drain
     } yield ExitCode.Success
     program.recoverWith(e => printer.error(e).as(ExitCode.Error))
   }
-
-  private val nl = "\r\n"
 
   private def parseArgs(args: List[String]): IO[(SourceRepo, TargetRepo, Limit)] = args match {
     case s :: t :: l :: _ => (SourceRepo(s).pure[IO], TargetRepo(t).pure[IO], Limit(l)).tupled
@@ -76,8 +76,14 @@ object Main extends IOApp {
     case _ => badArgument("expected at least two params that should be 'OWNER/REPO' github repo paths").raiseError
   }
 
+}
+
+object gh {
+
+  private val nl = "\r\n"
+
   // https://cli.github.com/manual/gh_issue_list
-  private def ghListIssues(source: SourceRepo, limit: Limit): Stream[IO, Issue] = {
+  def listOpenIssues(source: SourceRepo, limit: Limit): Stream[IO, Issue] = {
     val command = NonEmptyList.of(
       "gh",
       "issue",
@@ -109,7 +115,7 @@ object Main extends IOApp {
   }
 
   // https://cli.github.com/manual/gh_issue_create
-  private def ghCopyOverIssue(target: TargetRepo)(issue: Issue): IO[Unit] = {
+  def copyIssue(target: TargetRepo)(issue: Issue): IO[NewIssue] = {
     val title = CommandArgString(issue.title)
     val body = CommandArgString(
       s"${issue.body}$nl$nl---$nl${nl}This issue was copied over from: [${issue.url}](${issue.url})"
@@ -133,18 +139,11 @@ object Main extends IOApp {
         .use(p => (parseNewIssueURLFromStdout(p), printer.dumpStderr(p)).parTupled.map(_._1))
 
       _ <- printer.info(s"created new issue @ $newIssueURL. starting to copy over comments...")
-
-      _ <- Stream
-        .emits(issue.comments)
-        .evalMap(ghCopyComment(newIssueURL))
-        .meteredStartImmediately(waitingTime)
-        .compile
-        .drain
-    } yield ()
+    } yield NewIssue(newIssueURL, issue.comments)
   }
 
   // https://cli.github.com/manual/gh_issue_comment
-  private def ghCopyComment(newIssueURL: NewIssueURL)(comment: Comment): IO[Unit] = {
+  def copyComment(newIssueURL: NewIssueURL)(comment: Comment): IO[Unit] = {
     val body = CommandArgString(
       s"${comment.body}$nl$nl---$nl${nl}This comment was copied over from: [${comment.url}](${comment.url})"
     )
@@ -186,13 +185,12 @@ object Main extends IOApp {
 
 }
 
-object gh {}
-
 object printer {
   private lazy val seedling = "🌱"
   private lazy val fire = "🔥"
   private lazy val point = "👉"
   private lazy val what = "🤨"
+  private lazy val github = "🐙🐈"
   private lazy val space = " "
 
   def info(s: String, indent: Int = 1): IO[Unit] = printlns(s, seedling, indent)
@@ -207,10 +205,10 @@ object printer {
   )
 
   def dumpStdout(p: Process[IO], indent: Int = 1): IO[Unit] =
-    printlns(p.stdout.through(fs2.text.utf8.decode), seedling, indent)
+    printlns(p.stdout.through(fs2.text.utf8.decode), s"$github$seedling", indent)
 
   def dumpStderr(p: Process[IO], indent: Int = 1): IO[Unit] =
-    printlns(p.stderr.through(fs2.text.utf8.decode), fire, indent)
+    printlns(p.stderr.through(fs2.text.utf8.decode), s"$github$fire", indent)
 
   def command(c: NonEmptyList[String]): IO[Unit] =
     if Main.debugCommands then printlns(s"running command:   ${c.mkString_(" ")}", point, 1) else IO.unit
@@ -231,6 +229,13 @@ object printer {
   private def lines(s: Stream[IO, String], padding: String, indent: Int): Stream[IO, String] =
     if indent >= 0 then s.through(fs2.text.lines).map(line => s"$padding${space.repeat(indent)}$line")
     else Stream.raiseError(bug(s"Indent should be >= 0 but was: $indent"))
+}
+
+case class NewIssue(
+    newUrl: NewIssueURL,
+    commentsToCopy: List[Comment]
+) {
+  def commentsToCopyStream: Stream[IO, Comment] = Stream.emits(commentsToCopy)
 }
 
 case class Issue(
